@@ -28,15 +28,7 @@ async function uploadFilesToVectorStore(name) {
       }
       return fs.createReadStream(path);
     });
-
-    let vectorStore = await openai.beta.vectorStores.create({
-      name: name,
-    });
-    const uploadResponse =
-      await openai.beta.vectorStores.fileBatches.uploadAndPoll(vectorStore.id, {
-        files: fileStreams,
-      });
-    return uploadResponse;
+    return fileStreams;
   } catch (error) {
     console.error("Error uploading file:", error);
   }
@@ -46,36 +38,48 @@ async function uploadFilesToVectorStore(name) {
 
 app.post("/upload-file", async (req, res) => {
   try {
-    if (!req.files || Object.keys(req.files).length === 0) {
+    if (!req.files || Object.keys(req.files.file).length === 0) {
       return res.status(400).send("No files were uploaded.");
     }
     const uploadedFile = req.files.file;
     let profileImage;
     let storagePath;
+    const uploadedFiles = Array.isArray(req.files.file) ? req.files.file : [req.files.file];
+    const fileStreams = [];
+
     if (uploadedFile) {
-      storagePath = getStoragePath(uploadedFile);
-      await uploadedFile.mv(storagePath);
-      profileImage = uploadedFile?.name;
+      for (const file of uploadedFiles) {
+        const storagePath = getStoragePath(file);
+        await file.mv(storagePath);
+        const streems = await uploadFilesToVectorStore(file.name);
+        fileStreams.push(...streems);
     }
-    const fileId = await uploadFilesToVectorStore(profileImage);
-    console.log("File ID:", fileId);
-    const assistant = await openai.beta.assistants.create({
-      name: "file assistants",
-      description: "you  answer from the file it is attached",
-      model: "gpt-4o-mini",
-      tools: [
-        { type: "file_search" },
-        {
-          type: "code_interpreter",
-        },
-      ],
-      tool_resources: {
-        file_search: {
-          vector_store_ids: [fileId?.vector_store_id],
-        },
+  }
+  let vectorStore = await openai.beta.vectorStores.create({
+    name: 'assisstentFielsforchat',
+  });
+    const fileIds =
+    await openai.beta.vectorStores.fileBatches.uploadAndPoll(vectorStore.id, {
+      files: fileStreams,
+    }
+  );
+  const assistant = await openai.beta.assistants.create({
+    name: "file assistants",
+    description: "you  answer from the file it is attached under 50 words",
+    model: "gpt-4o-mini",
+    tools: [
+      { type: "file_search" },
+      {
+        type: "code_interpreter",
       },
-    });
-    res.status(200).json({ assistantId: assistant?.id });
+    ],
+    tool_resources: {
+      file_search: {
+        vector_store_ids: [fileIds?.vector_store_id],
+      },
+    },
+  });
+    res.status(200).json({ assistantId: assistant });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: error.message });
